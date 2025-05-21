@@ -8,6 +8,7 @@ import {
     Checkbox,
     SegmentedControl,
     Pagination,
+    NumberInput,
 } from "@mantine/core"
 import { GridApi } from "ag-grid-community"
 import { RefObject, useRef, useState } from "react"
@@ -26,6 +27,8 @@ import {
 } from "./pdfUtils"
 import type { ActiveCell } from "./pdfUtils"
 import { CSVGrid } from "./CSVTable"
+import { ResizableAffix } from "./ResizeableAffix"
+import { ExportCSVButton } from "./ExportCSVButton"
 
 // setup pdfjs worker
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -64,6 +67,12 @@ function App() {
     const [editingMode, setEditingMode] = useState(TEMPLATE_MODE)
 
     const [scale, setScale] = useState(1.25)
+    const [defaultRowValue, setDefaultRowValue] = useState<
+        Record<string, object>
+    >({})
+
+    const [selectedRow, setSelectedRow] = useState<number>(-1)
+    const [copiedRow, setCopiedRow] = useState<Array<object> | undefined>()
 
     const currentCellValue = data[activeCell.rowIndex][activeCell.colId] ?? []
 
@@ -96,7 +105,6 @@ function App() {
             .map((t, i) => ({ ...t, index: i }))
         setCurrentPageTextData(filteredSortedData)
     }
-    console.log(currentPageTextData)
 
     const editData = ({ rowIndex, colId, newValue }) => {
         const api: GridApi = gridRef?.current?.api
@@ -107,6 +115,7 @@ function App() {
         // TODO: is this pure? idk.
         if (updateAll) {
             // set each data row value by column id to the new value
+            setDefaultRowValue((old) => ({ ...old, [colId]: newValue }))
             setData((oldData) =>
                 oldData.map((d) => {
                     d[colId] = newValue
@@ -140,11 +149,10 @@ function App() {
         })
     }
 
-    const processCellCallback = ({ api, value, node, column }) => {
+    const processCellCallback = ({ value }) => {
         if (typeof value === "string") {
             return value
         }
-        console.log(value)
 
         return resolveValuesAndOperations(value).join(" ")
     }
@@ -160,28 +168,28 @@ function App() {
         editData({ ...activeCell, newValue })
     }
 
-    const applyTemplateToActiveRow = () => {
+    const applyTemplateToRowIndex = (rowIndex) => {
         // selectedTemplate
         // { key: obj }
-        setData((oldData) => {
-            const result = generateDataFromTemplate({
-                template: oldData[templateRow],
-                templateRowIndex: templateRow,
-                rowIndex: activeCell.rowIndex,
-                data: oldData,
-                currentTextObjects: currentPageTextData,
-                templateOffset,
-            })
-            if (!result) {
-                // error
-                return oldData
-            }
-            const { data, offsetUsed } = result
-            setTemplateOffset(offsetUsed)
-
-            return data
+        const result = generateDataFromTemplate({
+            template: data[templateRow],
+            templateRowIndex: templateRow,
+            rowIndex,
+            data,
+            currentTextObjects: currentPageTextData,
+            templateOffset,
         })
+        if (!result) {
+            return
+        }
+
+        const { data: newData, offsetUsed } = result
+        setTemplateOffset(offsetUsed)
+        setData(newData)
     }
+
+    const applyTemplateToActiveRow = () =>
+        applyTemplateToRowIndex(activeCell.rowIndex)
 
     const onPageClick = async (event) => {
         const closest = getClosestTextToMouseEvent(event, true)
@@ -231,7 +239,7 @@ function App() {
         return sortedText[0]
     }
 
-    const addNewRow = () => setData((old) => [...old, {}])
+    const addNewRow = () => setData((old) => [...old, defaultRowValue])
 
     const operationsEnabled =
         currentCellValue.length &&
@@ -244,6 +252,75 @@ function App() {
     const exportToCSV = () => {
         gridRef.current.api.exportDataAsCsv()
     }
+
+    const copyRow = () => {
+        setCopiedRow(data[selectedRow])
+    }
+
+    // to be used for "pasting" a template to a new row in cases like new pdf page
+    // and auto-index-offset will fail
+    const pasteRow = () => {
+        const dataToInject = copiedRow
+        console.log(dataToInject)
+        if (!dataToInject) {
+            return
+        }
+        // new template will likely have new text values, optimistically update them
+        const newRow: Record<string, object> = {}
+        Object.entries(dataToInject).forEach(([field, value]) => {
+            newRow[field] = value?.map?.((v) => {
+                if (v.manual) {
+                    return { ...v }
+                }
+                return {
+                    ...v,
+                    str: currentPageTextData.find(
+                        (obj) => obj.index === v.index
+                    ).str,
+                }
+            })
+        })
+        console.log(newRow)
+        setData((old) => {
+            const newData = [...old]
+            newData.splice(activeCell.rowIndex, 1, newRow)
+            return newData
+        })
+        setTemplateRow(selectedRow)
+    }
+
+    const addNewTemplatedRow = () => {
+        addNewRow()
+        setActiveCell((old) => ({
+            ...old,
+            rowIndex: old.rowIndex + 1,
+        }))
+        applyTemplateToRowIndex(activeCell.rowIndex + 1)
+    }
+
+    const adjustRowTemplateIndex = (rowIndex, value) => {
+        const currentTemplate = data[rowIndex]
+        const values = Object.values(currentTemplate)
+        const baseIndex = values[0]?.[0]?.index
+        const offset = value - baseIndex
+        console.log(baseIndex, offset)
+        const newTemplateValue: Record<string, object> = {}
+        for (const [key, value] of Object.entries(currentTemplate)) {
+            const newValue = value.map((v) => ({
+                ...v,
+                index: v.index + offset,
+                str: currentPageTextData[v.index + offset].str,
+            }))
+            newTemplateValue[key] = newValue
+        }
+
+        setData((old) => {
+            const newData = [...old]
+            newData.splice(templateRow, 1, newTemplateValue)
+            return newData
+        })
+    }
+    console.log(Object.values(data[templateRow] ?? {})[0]?.[0]?.index)
 
     return (
         <>
@@ -302,73 +379,88 @@ function App() {
                     setTemplateRow,
                 }}
             >
-                {/* <Checkbox
-                    checked={updateAll}
-                    onChange={(e) => setUpdateAll(e.target.checked)}
-                    label="Update all rows simultaneously?"
-                /> */}
-                <SegmentedControl
-                    m={"sm"}
-                    value={editingMode}
-                    data={[MANUAL_MODE, TEMPLATE_MODE]}
-                    onChange={setEditingMode}
-                />
-                <Group gap={"sm"} p={"sm"}>
-                    <Button
-                        onClick={() =>
-                            appendOperationToCurrentCell(OPERATIONS.ADD)
-                        }
-                        disabled={!operationsEnabled}
-                    >
-                        {"Add"}
-                    </Button>
-                    <Button
-                        onClick={() =>
-                            appendOperationToCurrentCell(OPERATIONS.SUBTRACT)
-                        }
-                        disabled={!operationsEnabled}
-                    >
-                        {"Subtract"}
-                    </Button>
-                    <Button
-                        onClick={() =>
-                            appendOperationToCurrentCell(OPERATIONS.MULTIPLY)
-                        }
-                        disabled={!operationsEnabled}
-                    >
-                        {"Multiply"}
-                    </Button>
-                    <Button
-                        onClick={() =>
-                            appendOperationToCurrentCell(OPERATIONS.DIVIDE)
-                        }
-                        disabled={!operationsEnabled}
-                    >
-                        {"Divide"}
-                    </Button>
-                </Group>
-                <Group gap={"sm"} p={"sm"}>
-                    <Button onClick={addNewRow}>Add Row</Button>
-                    <Button onClick={clearCellData}>Clear Cell</Button>
-                    <Button
-                        onClick={() => applyTemplateToActiveRow()}
-                        disabled={
-                            templateRow === activeCell.rowIndex ||
-                            templateRow == -1
-                        }
-                    >
-                        Apply Template
-                    </Button>
-                    <Button onClick={() => exportToCSV()}>Export to CSV</Button>
-                </Group>
-                {/* <div style={{ height: 720, width: "100%" }}> */}
-                <CSVGrid
-                    ref={gridRef}
-                    data={data}
-                    editingMode={editingMode}
-                    processCellCallback={processCellCallback}
-                ></CSVGrid>
-                {/* </div> */}
+                <ResizableAffix>
+                    <Group wrap="nowrap">
+                        {editingMode === MANUAL_MODE && (
+                            <Checkbox
+                                checked={updateAll}
+                                onChange={(e) => setUpdateAll(e.target.checked)}
+                                label="Update all rows?"
+                            />
+                        )}
+                        <SegmentedControl
+                            m={"sm"}
+                            value={editingMode}
+                            data={[MANUAL_MODE, TEMPLATE_MODE]}
+                            onChange={setEditingMode}
+                        />
+                        {Object.values(OPERATIONS).map((o) => (
+                            <Button
+                                onClick={() => appendOperationToCurrentCell(o)}
+                                disabled={!operationsEnabled}
+                            >
+                                {o.symbol}
+                            </Button>
+                        ))}
+                    </Group>
+                    <Group gap={"sm"} p={"sm"}>
+                        <Button onClick={addNewRow}>Add Row</Button>
+                        <Button onClick={clearCellData}>Clear Cell</Button>
+                        <Button
+                            disabled={templateOffset === -1}
+                            onClick={addNewTemplatedRow}
+                        >
+                            Add new templated row
+                        </Button>
+                        <Button
+                            onClick={() => applyTemplateToActiveRow()}
+                            disabled={
+                                templateRow === activeCell.rowIndex ||
+                                templateRow == -1
+                            }
+                        >
+                            Apply Template
+                        </Button>
+                        <ExportCSVButton api={gridRef.current?.api} />
+                        <Button
+                            onClick={() => copyRow()}
+                            disabled={!data[selectedRow]}
+                        >
+                            Copy Template
+                        </Button>
+                        <Button
+                            onClick={() => pasteRow()}
+                            disabled={!(data[selectedRow] && !!copiedRow)}
+                        >
+                            Paste Template
+                        </Button>
+                        <NumberInput
+                            value={
+                                Object.values(data[templateRow] ?? {})[0]?.[0]
+                                    ?.index
+                            }
+                            disabled={
+                                Object.values(data[templateRow] ?? {})[0]?.[0]
+                                    ?.index === undefined ||
+                                editingMode === MANUAL_MODE
+                            }
+                            description={"Template offset control"}
+                            min={0}
+                            max={currentPageTextData.length - 1}
+                            onChange={(e) =>
+                                adjustRowTemplateIndex(templateRow, e)
+                            }
+                        />
+                    </Group>
+                    <CSVGrid
+                        ref={gridRef}
+                        data={data}
+                        editingMode={editingMode}
+                        setDataValue={editData}
+                        onRowSelected={setSelectedRow}
+                        processCellCallback={processCellCallback}
+                    ></CSVGrid>
+                </ResizableAffix>
             </TemplateContext.Provider>
             {/* </Group> */}
         </>

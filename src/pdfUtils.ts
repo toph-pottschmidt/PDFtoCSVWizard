@@ -16,7 +16,7 @@ const computeTemplateOffset = ({
     // TODO: validate find method
     const templateBasisKey = Object.keys(currentRow).find(
         (key) =>
-            currentRow[key] !== undefined && key !== "apply-template"
+            currentRow[key] !== undefined && key !== "apply-template" && currentRow[key].some(v => v?.index)
     )
     console.log("Template Basis Key: ", templateBasisKey)
     if (templateBasisKey === undefined) {
@@ -64,15 +64,17 @@ export const generateDataFromTemplate = ({
     })
 
     const selectedTemplate = template
-    const currentRow = data[rowIndex]
+
+    const newData = [...data]
+    const currentRow = newData[rowIndex] ?? {}
     console.log("Current Row:", currentRow)
 
+    console.log(computedTemplateOffset)
     if (computedTemplateOffset === undefined) {
         // manual entries can be propagated anyway
         return
     }
 
-    const newData = [...data]
 
     const offset = computedTemplateOffset * (rowIndex - templateRowIndex)
     console.log("Offset: ", offset)
@@ -84,6 +86,9 @@ export const generateDataFromTemplate = ({
         }
         const resultingValue = []
         const templateValue = selectedTemplate[key] // array
+        if (!templateValue) {
+            return
+        }
         console.log(key, templateValue)
         for (const templateObject of templateValue) {
             if (isOperation(templateObject) || templateObject.manual) {
@@ -191,14 +196,6 @@ type Operation = {
 }
 
 export const OPERATIONS: Record<string, Operation> = {
-    DIVIDE: {
-        symbol: "/",
-        apply: (a, b) => a / b,
-    },
-    MULTIPLY: {
-        symbol: "x",
-        apply: (a, b) => a * b,
-    },
     ADD: {
         symbol: "+",
         apply: (a, b) => a + b,
@@ -206,5 +203,13 @@ export const OPERATIONS: Record<string, Operation> = {
     SUBTRACT: {
         symbol: "-",
         apply: (a, b) => a - b,
+    },
+    MULTIPLY: {
+        symbol: "x",
+        apply: (a, b) => a * b,
+    },
+    DIVIDE: {
+        symbol: "/",
+        apply: (a, b) => a / b,
     },
 }

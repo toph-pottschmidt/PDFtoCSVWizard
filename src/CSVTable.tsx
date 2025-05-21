@@ -1,6 +1,6 @@
 import { AgGridReact } from "ag-grid-react"
 import { AllCommunityModule, ModuleRegistry } from "ag-grid-community"
-import { forwardRef, useContext, useEffect, useMemo, useState } from "react"
+import { forwardRef, useContext, useEffect, useMemo } from "react"
 import "@mantine/core/styles.css"
 import "react-pdf/dist/esm/Page/TextLayer.css"
 import {
@@ -11,7 +11,6 @@ import {
     isOperation,
 } from "./pdfUtils"
 import { Button, Stack, Text, TextInput } from "@mantine/core"
-import { ResizableAffix } from "./ResizeableAffix"
 
 // Register all Community features
 ModuleRegistry.registerModules([AllCommunityModule])
@@ -96,6 +95,9 @@ function renderValue(valueToRender, isTemplateMode, logging = false): string {
             .map((v) => renderValue(v, isTemplateMode))
             .join(" ")
     }
+    if (valueToRender?.manual) {
+        return valueToRender.str
+    }
     // template object
     if (typeof valueToRender.str === "string") {
         return isTemplateMode ? `{{${valueToRender.index}}}` : valueToRender.str
@@ -120,7 +122,7 @@ function PDFObjectCell({ editingMode, activeCell, node, value, colDef }) {
     } catch (e) {
         console.warn("attempting to render uncalculable value", e)
     }
-    if (value?.manual) {
+    if (value?.every((v) => v?.manual)) {
         return <Text>{renderValue(value, false)}</Text>
     }
     return (
@@ -136,20 +138,12 @@ function PDFObjectCell({ editingMode, activeCell, node, value, colDef }) {
     )
 }
 
-function SetSelectedTemplateCell({
-    setTemplateRow,
-    node,
-    value,
-    colDef,
-    activeCell,
-    data,
-    api,
-}) {
-    console.log(data)
+function SetSelectedTemplateCell({ setTemplateRow, node, data, api }) {
     const enabled = api
         ?.getColumnDefs()
         .map((c) => c.field)
-        .some((f) => (f ? data[f] !== undefined : true))
+        .filter((f) => f && data[f])
+        .some((f) => f)
 
     return (
         <Button
@@ -193,9 +187,24 @@ function PDFObjectCellEditor({ value, onValueChange }) {
 
 // Component meant to house settings and
 export const CSVGrid = forwardRef(
-    ({ data, editingMode, processCellCallback, children }, ref) => {
+    (
+        {
+            data,
+            editingMode,
+            processCellCallback,
+            children,
+            setDataValue,
+            onRowSelected,
+        },
+        ref
+    ) => {
         const { activeCell, setActiveCell, setTemplateRow } =
             useContext(TemplateContext)
+
+        const modeData = useMemo(() => data, [])
+        useEffect(() => {
+            ref?.current?.api?.setGridOption("rowData", data)
+        }, [data])
 
         // TODO: too verbose event handler, would love to refactor and prevent bugs with this
 
@@ -278,11 +287,18 @@ export const CSVGrid = forwardRef(
         }, [ref, activeCell])
 
         return (
-            <ResizableAffix>
-                {children}
+            <>
                 <AgGridReact
-                    rowHeight={editingMode === TEMPLATE_MODE ? 72 : 42}
                     ref={ref}
+                    animateRows={false}
+                    onRowSelected={(e) => {
+                        console.log(e)
+                        if (e.event?.target?.checked) {
+                            return onRowSelected(e.rowIndex)
+                        }
+                        return onRowSelected(-1)
+                    }}
+                    rowSelection={{ mode: "singleRow" }}
                     defaultColDef={{
                         cellRendererParams: {
                             editingMode,
@@ -303,28 +319,27 @@ export const CSVGrid = forwardRef(
                             .filter((k) => k !== "apply-template"),
                         processCellCallback,
                     }}
-                    onCellEditingStopped={(props) => {
-                        const { newValue, oldValue, node, column } = props
-                        console.log(props)
-                        if (typeof newValue !== "string") {
-                            return
-                        }
-                        node.setDataValue(column, [
-                            ...oldValue,
-                            { str: newValue, manual: true },
-                        ])
+                    onCellEditingStopped={({ newValue, node, column }) => {
+                        setDataValue({
+                            rowIndex: node.rowIndex,
+                            colId: column.colId,
+                            newValue,
+                        })
                     }}
                     onRowDataUpdated={(e) => console.log(e)}
-                    rowData={data}
+                    rowData={modeData}
                     columnDefs={columns}
-                    onGridReady={(e) => {
+                    onGridReady={(params) => {
                         setActiveCell({
                             rowIndex: 0,
                             colId: columns[numActionColumns].colId,
                         })
+                        // window.addEventListener("resize", () => {
+                        //     params.api.sizeColumnsToFit()
+                        // })
                     }}
                 />
-            </ResizableAffix>
+            </>
         )
     }
 )
