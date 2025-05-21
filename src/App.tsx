@@ -50,10 +50,9 @@ function App() {
     const [dimensions, setDimensions] = useState({ height: 0, width: 0 })
     const [loading, setLoading] = useState(true)
 
-    const [data, setData] = useState(startData)
+    const [data, setData] = useState<Array<object>>(startData)
     const [currentPageTextData, setCurrentPageTextData] = useState([])
     const documentRef = useRef(null)
-    const [mostRecentClickedText, setMostRecentClickedText] = useState("")
 
     const [activeCell, setActiveCell] = useState<ActiveCell>(defaultActiveCell)
 
@@ -193,7 +192,6 @@ function App() {
 
     const onPageClick = async (event) => {
         const closest = getClosestTextToMouseEvent(event, true)
-        setMostRecentClickedText(closest?.str)
         onTextObjectClick(closest)
     }
 
@@ -320,7 +318,23 @@ function App() {
             return newData
         })
     }
-    console.log(Object.values(data[templateRow] ?? {})[0]?.[0]?.index)
+
+    const onRowSelected = (e) => {
+        if (!e.event?.target) {
+            return
+        }
+        if (e.rowIndex === selectedRow && !e.event.target.checked) {
+            setSelectedRow(-1)
+        } else if (e.event.target.checked) {
+            setSelectedRow(e.rowIndex)
+        }
+    }
+
+    const onCellClicked = ({ node, colDef }) =>
+        setActiveCell({
+            colId: colDef.colId!,
+            rowIndex: node.rowIndex!,
+        })
 
     return (
         <>
@@ -329,6 +343,14 @@ function App() {
                 <FileButton onChange={handleFileChange} accept=".pdf">
                     {(props) => <Button {...props}>Upload PDF</Button>}
                 </FileButton>
+                <NumberInput
+                    label={"Zoom"}
+                    onChange={(v) => setScale(Number(v))}
+                    step={0.05}
+                    value={scale}
+                    min={0.25}
+                    max={4.0}
+                />
 
                 {file && (
                     <Pagination
@@ -337,9 +359,6 @@ function App() {
                         siblings={5}
                         onChange={setCurrentPage}
                     />
-                )}
-                {mostRecentClickedText && (
-                    <Text>You just clicked {mostRecentClickedText}</Text>
                 )}
             </Group>
             {file && (
@@ -457,7 +476,8 @@ function App() {
                         data={data}
                         editingMode={editingMode}
                         setDataValue={editData}
-                        onRowSelected={setSelectedRow}
+                        onRowSelected={onRowSelected}
+                        onCellClicked={onCellClicked}
                         processCellCallback={processCellCallback}
                     ></CSVGrid>
                 </ResizableAffix>

@@ -62,18 +62,13 @@ export const ResizableAffix = ({ children }) => {
                     ...dimensionProps,
                 }}
             >
-                <Group
-                    w={"100%"}
-                    align="flex-end"
-                    justify="flex-end"
-                    p={"xs"}
-                    title={fullscreen ? "Exit Fullscreen" : "Full Screen"}
-                >
+                <Group w={"100%"} align="flex-end" justify="flex-end" p={"xs"}>
                     <Button
                         onClick={toggle}
                         style={{}}
                         size="xs"
                         variant="outline"
+                        title={fullscreen ? "Exit Fullscreen" : "Full Screen"}
                     >
                         {fullscreen ? <CloseIcon /> : <Move />}
                     </Button>

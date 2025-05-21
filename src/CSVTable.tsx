@@ -195,6 +195,7 @@ export const CSVGrid = forwardRef(
             children,
             setDataValue,
             onRowSelected,
+            onCellClicked,
         },
         ref
     ) => {
@@ -210,6 +211,9 @@ export const CSVGrid = forwardRef(
 
         useEffect(() => {
             const onKeyDown = (e: Event) => {
+                if (editingMode === MANUAL_MODE) {
+                    return
+                }
                 switch (e.key) {
                     case "a":
                     case "ArrowLeft":
@@ -277,7 +281,7 @@ export const CSVGrid = forwardRef(
             document.addEventListener("keydown", onKeyDown)
 
             return () => document.removeEventListener("keydown", onKeyDown)
-        }, [setActiveCell, data])
+        }, [setActiveCell, data, editingMode])
 
         useEffect(() => {
             ref?.current?.api?.setFocusedCell(
@@ -291,13 +295,7 @@ export const CSVGrid = forwardRef(
                 <AgGridReact
                     ref={ref}
                     animateRows={false}
-                    onRowSelected={(e) => {
-                        console.log(e)
-                        if (e.event?.target?.checked) {
-                            return onRowSelected(e.rowIndex)
-                        }
-                        return onRowSelected(-1)
-                    }}
+                    onRowSelected={onRowSelected}
                     rowSelection={{ mode: "singleRow" }}
                     defaultColDef={{
                         cellRendererParams: {
@@ -319,24 +317,22 @@ export const CSVGrid = forwardRef(
                             .filter((k) => k !== "apply-template"),
                         processCellCallback,
                     }}
-                    onCellEditingStopped={({ newValue, node, column }) => {
+                    onCellEditingStopped={({ newValue, node, colDef }) => {
                         setDataValue({
                             rowIndex: node.rowIndex,
-                            colId: column.colId,
+                            colId: colDef.colId!,
                             newValue,
                         })
                     }}
+                    onCellClicked={onCellClicked}
                     onRowDataUpdated={(e) => console.log(e)}
                     rowData={modeData}
                     columnDefs={columns}
-                    onGridReady={(params) => {
+                    onGridReady={() => {
                         setActiveCell({
                             rowIndex: 0,
                             colId: columns[numActionColumns].colId,
                         })
-                        // window.addEventListener("resize", () => {
-                        //     params.api.sizeColumnsToFit()
-                        // })
                     }}
                 />
             </>
