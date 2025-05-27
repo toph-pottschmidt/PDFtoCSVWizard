@@ -33,8 +33,9 @@ This tool should be published at https://toph-pottschmidt.github.io/PDFtoCSVWiza
     - Select another number.
     - The cell should preview the result if the objects and calculations are compatible. If you see no preview, double check to make sure the data you are entering can be interpreted numerically as a base10 number.
     - NOTE: Order of operations is not respected. Think of it as a "simple" calculator, e.g. 1 + 2 + 3 + 4 / 5 = 10, not 6.8 If you need more complex formulas, please export the CSV to a spreadsheet application and create the formula yourself.
-5.
-6. Export CSV
+5. Export CSV
+
+NOTE: The website will auto-save your work every 30 seconds, and will retain your most recent PDF file in case of a crash as a convenience to you. Clear your browser cache if you need to reset all data for the application.
 
 # Local development, installation, contributing, etc.
 
