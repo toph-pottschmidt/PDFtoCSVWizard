@@ -35,7 +35,8 @@ const computeTemplateOffset = ({
         templateBasis[0].index -
         selectedTemplate[templateBasisKey][0].index : templateOffset
 
-    return offset
+    // absolute value because the row indicates the sign of the operation
+    return Math.abs(offset)
 }
 
 type TemplateGenerationFunctionProps = {
@@ -81,9 +82,6 @@ export const generateDataFromTemplate = ({
     const resultingRow = currentRow
     Object.keys(selectedTemplate).forEach((key) => {
         // apply offset congruently to all row entries of the template, respecting operations
-        if (resultingRow[key] !== undefined) {
-            return
-        }
         const resultingValue = []
         const templateValue = selectedTemplate[key] // array
         if (!templateValue) {
@@ -112,8 +110,9 @@ export const generateDataFromTemplate = ({
 
 export const resolveValuesAndOperations = (values) => {
     let currentValueIndex = 0
-    let outputValues = [] // will reduce
+    const outputValues = [] // will reduce
     if (!values) {
+        console.log("no values, returning []")
         return []
     }
     while (currentValueIndex < values.length) {
@@ -127,13 +126,15 @@ export const resolveValuesAndOperations = (values) => {
             isOperation(currentValue) &&
             currentValueIndex < values.length - 1
         ) {
+            // isOperation can't succeed without getOperation succeeding
+            const operation = getOperation(currentValue)!
             const lastValue = outputValues.pop() ?? Number(values[currentValueIndex - 1].str)
-            const opOutput = currentValue.apply(
+            const opOutput = operation.apply(
                 lastValue,
                 Number(values[currentValueIndex + 1].str)
             )
-            // console.log(`${lastValue} ${currentValue.symbol} ${+values[currentValueIndex + 1].str} = ${opOutput}`)
             outputValues.push(opOutput)
+            currentValueIndex += 1
         }
         else if (currentValue.manual) {
             // manual string entry
@@ -141,7 +142,7 @@ export const resolveValuesAndOperations = (values) => {
         }
         // number yet to be processed
         else if (!isNaN(Number(currentValue.str))) {
-            // pass
+            outputValues.push(Number(currentValue.str))
         }
         // string
         else if (typeof currentValue.str === "string") {
@@ -153,6 +154,7 @@ export const resolveValuesAndOperations = (values) => {
 
         currentValueIndex += 1
     }
+    console.log(outputValues)
     return outputValues
 }
 
@@ -166,6 +168,9 @@ export type TemplateContextProps = {
     setActiveCell: (cell: ActiveCell) => void
     templateRow: number
     setTemplateRow: (row: number) => void
+    deleteRow: (row: number) => void
+    copyRow: (row: number) => void
+    pasteRow: (row: number) => void
 }
 
 export const defaultActiveCell = {
@@ -178,6 +183,9 @@ export const TemplateContext = createContext<TemplateContextProps>({
     setActiveCell: () => {},
     templateRow: 0,
     setTemplateRow: () => {},
+    deleteRow: () => {},
+    copyRow: () => {},
+    pasteRow: () => {},
 })
 
 
@@ -187,10 +195,12 @@ export const TEMPLATE_MODE = "Template Mode"
 
 
 export const isOperation = (op: Operation | object) =>
-    Object.values(OPERATIONS).some((o) => o === op)
+    Object.values(OPERATIONS).some((o) => o.symbol === op?.symbol)
 
+export const getOperation = (op: Operation | object) => 
+    Object.values(OPERATIONS).find((o) => o.symbol === op?.symbol)
 
-type Operation = {
+export type Operation = {
     symbol: string
     apply: (a: number, b: number) => number
 }
@@ -212,4 +222,17 @@ export const OPERATIONS: Record<string, Operation> = {
         symbol: "/",
         apply: (a, b) => a / b,
     },
+}
+
+export const getFirstTemplateValue = (rowValue) => {
+    if (!rowValue) {
+        return undefined
+    }
+    let templateValue
+    Object.values(rowValue).forEach((v) => {
+        if (Array.isArray(v)) {
+            templateValue = v.find(v2 => v2?.index !== undefined)
+        }
+    })
+    return templateValue
 }

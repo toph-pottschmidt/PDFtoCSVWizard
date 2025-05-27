@@ -10,7 +10,7 @@ import {
     MANUAL_MODE,
     isOperation,
 } from "./pdfUtils"
-import { Button, Stack, Text, TextInput } from "@mantine/core"
+import { ActionIcon, Button, Menu, Stack, Text, TextInput } from "@mantine/core"
 
 // Register all Community features
 ModuleRegistry.registerModules([AllCommunityModule])
@@ -59,6 +59,7 @@ const columns = templateHeaders.map((header) => {
         cellEditor: PDFObjectCellEditor,
         autoHeight: true,
         wrapText: true,
+        sortable: false,
         // suppressKeyboardEvent: (params) => {
         //     console.log("cell is editing: " + params.editing)
         //     console.log("keyboard event:", params.event)
@@ -74,7 +75,7 @@ const columns = templateHeaders.map((header) => {
 
 columns.unshift({
     colId: "apply-template",
-    cellRenderer: SetSelectedTemplateCell,
+    cellRenderer: RowActionCell,
     pinned: "left",
 })
 
@@ -138,7 +139,15 @@ function PDFObjectCell({ editingMode, activeCell, node, value, colDef }) {
     )
 }
 
-function SetSelectedTemplateCell({ setTemplateRow, node, data, api }) {
+function RowActionCell({
+    setTemplateRow,
+    deleteRow,
+    node,
+    data,
+    api,
+    copyRow,
+    pasteRow,
+}) {
     const enabled = api
         ?.getColumnDefs()
         .map((c) => c.field)
@@ -146,12 +155,29 @@ function SetSelectedTemplateCell({ setTemplateRow, node, data, api }) {
         .some((f) => f)
 
     return (
-        <Button
-            onClick={() => setTemplateRow(node.rowIndex)}
-            disabled={!enabled}
-        >
-            {"Set as template"}
-        </Button>
+        <Menu>
+            <Menu.Target>
+                <Button>Row Actions</Button>
+            </Menu.Target>
+
+            <Menu.Dropdown>
+                <Menu.Item
+                    onClick={() => setTemplateRow(node.rowIndex)}
+                    disabled={!enabled}
+                >
+                    <Text>Set as Template</Text>
+                </Menu.Item>
+                <Menu.Item onClick={() => deleteRow(node.rowIndex)}>
+                    <Text c={"red"}>Delete Row</Text>
+                </Menu.Item>
+                <Menu.Item onClick={() => copyRow(node.rowIndex)}>
+                    <Text>Copy Row</Text>
+                </Menu.Item>
+                <Menu.Item onClick={() => pasteRow(node.rowIndex)}>
+                    <Text>Paste Row</Text>
+                </Menu.Item>
+            </Menu.Dropdown>
+        </Menu>
     )
 }
 
@@ -161,23 +187,6 @@ const createManualEntryObject = (str) => ({
 })
 
 function PDFObjectCellEditor({ value, onValueChange }) {
-    const onChange = ({ target: { value: newValue } }) => {
-        // attempt to grab the most recent object
-        const preChangeValue = value ?? []
-        const mostRecentValue = preChangeValue?.[preChangeValue?.length - 1]
-
-        // if it's already a manual entry, change the value on the object
-        if (mostRecentValue?.manual) {
-            mostRecentValue.originalStr ??= mostRecentValue.str
-            mostRecentValue.str += newValue
-        }
-        const valueToSubmit = mostRecentValue?.manual
-            ? preChangeValue
-            : [...preChangeValue, createManualEntryObject(newValue)]
-        console.log(mostRecentValue, valueToSubmit)
-        onValueChange(valueToSubmit)
-    }
-
     const onChange2 = (e) => {
         onValueChange([createManualEntryObject(e.target.value)])
     }
@@ -199,13 +208,14 @@ export const CSVGrid = forwardRef(
         },
         ref
     ) => {
-        const { activeCell, setActiveCell, setTemplateRow } =
-            useContext(TemplateContext)
-
-        const modeData = useMemo(() => data, [])
-        useEffect(() => {
-            ref?.current?.api?.setGridOption("rowData", data)
-        }, [data])
+        const {
+            activeCell,
+            setActiveCell,
+            setTemplateRow,
+            deleteRow,
+            copyRow,
+            pasteRow,
+        } = useContext(TemplateContext)
 
         // TODO: too verbose event handler, would love to refactor and prevent bugs with this
 
@@ -223,6 +233,7 @@ export const CSVGrid = forwardRef(
                             )
                             if (
                                 colIndex === -1 ||
+                                colIndex === 0 ||
                                 colIndex === numActionColumns
                             ) {
                                 return oldCell
@@ -302,6 +313,9 @@ export const CSVGrid = forwardRef(
                             editingMode,
                             activeCell,
                             setTemplateRow,
+                            deleteRow,
+                            copyRow,
+                            pasteRow,
                         },
                         cellEditorParams: {
                             editingMode,
@@ -326,7 +340,7 @@ export const CSVGrid = forwardRef(
                     }}
                     onCellClicked={onCellClicked}
                     onRowDataUpdated={(e) => console.log(e)}
-                    rowData={modeData}
+                    rowData={data}
                     columnDefs={columns}
                     onGridReady={() => {
                         setActiveCell({

@@ -1,18 +1,14 @@
 import "./App.css"
 import {
     Button,
-    FileButton,
     Group,
     Title,
-    Text,
     Checkbox,
     SegmentedControl,
-    Pagination,
     NumberInput,
 } from "@mantine/core"
 import { GridApi } from "ag-grid-community"
-import { RefObject, useRef, useState } from "react"
-import { Document, Page, pdfjs } from "react-pdf"
+import { RefObject, useCallback, useEffect, useRef, useState } from "react"
 import "@mantine/core/styles.css"
 import "react-pdf/dist/esm/Page/TextLayer.css"
 import {
@@ -24,35 +20,44 @@ import {
     OPERATIONS,
     MANUAL_MODE,
     TEMPLATE_MODE,
+    getFirstTemplateValue,
 } from "./pdfUtils"
-import type { ActiveCell } from "./pdfUtils"
+import type { ActiveCell, Operation } from "./pdfUtils"
 import { CSVGrid } from "./CSVTable"
 import { ResizableAffix } from "./ResizeableAffix"
 import { ExportCSVButton } from "./ExportCSVButton"
+import { readLocalStorageValue, useLocalStorage } from "@mantine/hooks"
+import { PDFViewer } from "./PDFViewer"
 
-// setup pdfjs worker
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/build/pdf.worker.min.mjs",
-    import.meta.url
-).toString()
+const VERSION = "0.1.0"
+
+window.r = resolveValuesAndOperations
+
+const CSV_DATA_STORAGE_KEY = "PdfToCsvWizard_WorkingData"
+const METADATA_STORAGE_KEY = "PdfToCsvWizard_Metadata"
 
 const startData = [{}]
 
-const options = {
-    cMapUrl: "/cmaps/",
-    standardFontDataUrl: "/standard_fonts/",
-}
-
 function App() {
-    const [file, setFile] = useState<File | null>(null)
-    const [numPages, setNumPages] = useState(0)
-    const [currentPage, setCurrentPage] = useState(0)
-    const [dimensions, setDimensions] = useState({ height: 0, width: 0 })
-    const [loading, setLoading] = useState(true)
+    // local storage values and callbacks
+    const [savedData, setSavedData] = useLocalStorage({
+        key: CSV_DATA_STORAGE_KEY,
+        defaultValue: startData,
+    })
+    const [workingMetadata, setWorkingMetadata] = useLocalStorage({
+        key: METADATA_STORAGE_KEY,
+        defaultValue: {},
+    })
+    const setMetadataValue = (property: string, value: any) => {
+        setWorkingMetadata((prev) => ({
+            ...prev,
+            [property]: value,
+        }))
+    }
 
-    const [data, setData] = useState<Array<object>>(startData)
+    const [loaded, setLoaded] = useState<boolean>(false)
+    const [data, setData] = useState<Array<object>>(savedData)
     const [currentPageTextData, setCurrentPageTextData] = useState([])
-    const documentRef = useRef(null)
 
     const [activeCell, setActiveCell] = useState<ActiveCell>(defaultActiveCell)
 
@@ -65,7 +70,6 @@ function App() {
     const [updateAll, setUpdateAll] = useState(false)
     const [editingMode, setEditingMode] = useState(TEMPLATE_MODE)
 
-    const [scale, setScale] = useState(1.25)
     const [defaultRowValue, setDefaultRowValue] = useState<
         Record<string, object>
     >({})
@@ -74,36 +78,32 @@ function App() {
     const [copiedRow, setCopiedRow] = useState<Array<object> | undefined>()
 
     const currentCellValue = data[activeCell.rowIndex][activeCell.colId] ?? []
+    // auto-save
+    useEffect(() => {
+        const intervalId = setInterval(() => {
+            console.log("Starting save")
+            setData((oldData) => {
+                // TOOD
+                setSavedData(oldData)
+                return oldData
+            })
+            console.log("Finished Saving!")
+        }, 30 * 1000)
 
-    const handleFileChange = (file) => {
-        if (!file) {
-            return
+        return () => clearInterval(intervalId)
+    }, [])
+
+    useEffect(() => {
+        const data = readLocalStorageValue({ key: CSV_DATA_STORAGE_KEY })
+        if (data) {
+            setData(data)
         }
-        setFile(file)
-        setNumPages(0)
-        setCurrentPage(0)
-    }
-
-    const onDocumentLoad = async (document) => {
-        setNumPages(document.numPages)
-        setCurrentPage(1)
-        setLoading(false)
-    }
-
-    const onPageLoad = async (page) => {
-        setDimensions({ height: page.height, width: page.width })
-
-        const textContent = await page.getTextContent()
-        const filteredSortedData = textContent.items
-            .filter((t) => t.str.trim())
-            .sort((a, b) =>
-                a.transform[5] === b.transform[5]
-                    ? a.transform[4] - b.transform[4]
-                    : b.transform[5] - a.transform[5]
-            )
-            .map((t, i) => ({ ...t, index: i }))
-        setCurrentPageTextData(filteredSortedData)
-    }
+        const metadata = readLocalStorageValue({ key: METADATA_STORAGE_KEY })
+        if (metadata?.defaultRowValue) {
+            setDefaultRowValue(metadata.defaultRowValue)
+        }
+        setLoaded(true)
+    }, [])
 
     const editData = ({ rowIndex, colId, newValue }) => {
         const api: GridApi = gridRef?.current?.api
@@ -114,7 +114,11 @@ function App() {
         // TODO: is this pure? idk.
         if (updateAll) {
             // set each data row value by column id to the new value
-            setDefaultRowValue((old) => ({ ...old, [colId]: newValue }))
+            setDefaultRowValue((old) => {
+                const newDefault = { ...old, [colId]: newValue }
+                setMetadataValue("defaultRowValue", newDefault)
+                return newDefault
+            })
             setData((oldData) =>
                 oldData.map((d) => {
                     d[colId] = newValue
@@ -131,11 +135,11 @@ function App() {
         })
     }
 
-    const appendOperationToCurrentCell = (newValue) => {
+    const appendOperationToCurrentCell = (newValue: Operation) => {
         if (!currentCellValue) {
             return
         }
-        const finalNewValue = [...currentCellValue, newValue]
+        const finalNewValue = [...currentCellValue, { symbol: newValue.symbol }]
         setData((oldData) => {
             const newData = [...oldData]
             const oldRow = oldData[activeCell.rowIndex]
@@ -148,7 +152,8 @@ function App() {
         })
     }
 
-    const processCellCallback = ({ value }) => {
+    const processCellCallback = ({ value, ...rest }) => {
+        console.log(value, rest)
         if (typeof value === "string") {
             return value
         }
@@ -190,53 +195,6 @@ function App() {
     const applyTemplateToActiveRow = () =>
         applyTemplateToRowIndex(activeCell.rowIndex)
 
-    const onPageClick = async (event) => {
-        const closest = getClosestTextToMouseEvent(event, true)
-        onTextObjectClick(closest)
-    }
-
-    const getClosestTextToMouseEvent = (e, requireInbounds = false) => {
-        const docBoundingBox =
-            documentRef?.current?.pages.current[
-                currentPage - 1
-            ].getBoundingClientRect() ?? {}
-        const clickDimensions = {
-            x: e.clientX - docBoundingBox.left,
-            y: e.clientY - docBoundingBox.top,
-        }
-
-        let textObjectsToSort = currentPageTextData
-
-        const shortCircutElement = document.elementsFromPoint(
-            e.clientX,
-            e.clientY
-        )[0]
-        // TODO: hardcoded tagname
-        if (shortCircutElement.tagName === "SPAN") {
-            textObjectsToSort = textObjectsToSort.filter(
-                (t) => t.str === shortCircutElement.textContent
-            )
-        } else if (requireInbounds) {
-            return
-        }
-
-        const sortedText = textObjectsToSort.sort((a, b) => {
-            // "pdfY" is equivalent to height - y for some reason
-            const aDiffValue = Math.hypot(
-                dimensions.height - a.transform[5] * scale - clickDimensions.y,
-                a.transform[4] * scale - clickDimensions.x
-            )
-            const bDiffValue = Math.hypot(
-                dimensions.height - b.transform[5] * scale - clickDimensions.y,
-                b.transform[4] * scale - clickDimensions.x
-            )
-
-            // we want lowest distance to click
-            return aDiffValue - bDiffValue
-        })
-        return sortedText[0]
-    }
-
     const addNewRow = () => setData((old) => [...old, defaultRowValue])
 
     const operationsEnabled =
@@ -247,17 +205,13 @@ function App() {
         editData({ ...activeCell, newValue: [] })
     }
 
-    const exportToCSV = () => {
-        gridRef.current.api.exportDataAsCsv()
-    }
-
-    const copyRow = () => {
-        setCopiedRow(data[selectedRow])
+    const copyRow = (row) => {
+        setCopiedRow(data[row])
     }
 
     // to be used for "pasting" a template to a new row in cases like new pdf page
     // and auto-index-offset will fail
-    const pasteRow = () => {
+    const pasteRow = (row) => {
         const dataToInject = copiedRow
         console.log(dataToInject)
         if (!dataToInject) {
@@ -273,18 +227,17 @@ function App() {
                 return {
                     ...v,
                     str: currentPageTextData.find(
-                        (obj) => obj.index === v.index
-                    ).str,
+                        (obj) => obj?.index === v.index
+                    )?.str,
                 }
             })
         })
-        console.log(newRow)
         setData((old) => {
             const newData = [...old]
-            newData.splice(activeCell.rowIndex, 1, newRow)
+            newData.splice(row, 1, newRow)
             return newData
         })
-        setTemplateRow(selectedRow)
+        setTemplateRow(row)
     }
 
     const addNewTemplatedRow = () => {
@@ -298,17 +251,22 @@ function App() {
 
     const adjustRowTemplateIndex = (rowIndex, value) => {
         const currentTemplate = data[rowIndex]
-        const values = Object.values(currentTemplate)
-        const baseIndex = values[0]?.[0]?.index
+        const baseIndex = getFirstTemplateValue(currentTemplate)?.index
+        // const baseIndex = values[0]?.[0]?.index
         const offset = value - baseIndex
         console.log(baseIndex, offset)
         const newTemplateValue: Record<string, object> = {}
         for (const [key, value] of Object.entries(currentTemplate)) {
-            const newValue = value.map((v) => ({
-                ...v,
-                index: v.index + offset,
-                str: currentPageTextData[v.index + offset].str,
-            }))
+            const newValue = value.map((v) => {
+                if (v.manual) {
+                    return v
+                }
+                return {
+                    ...v,
+                    index: v?.index + offset,
+                    str: currentPageTextData[v.index + offset]?.str,
+                }
+            })
             newTemplateValue[key] = newValue
         }
 
@@ -336,66 +294,33 @@ function App() {
             rowIndex: node.rowIndex!,
         })
 
+    const deleteRow = useCallback((row: number) => {
+        setData((oldData) => {
+            const newData = [...oldData]
+            newData.splice(row, 1)
+            return newData
+        })
+        setActiveCell((old) => ({ ...old, rowIndex: 0 }))
+    }, [])
+
+    const resetData = () => setData([{}])
+
     return (
         <>
-            <Title>PDF Parsing Utility</Title>
-            <Group>
-                <FileButton onChange={handleFileChange} accept=".pdf">
-                    {(props) => <Button {...props}>Upload PDF</Button>}
-                </FileButton>
-                <NumberInput
-                    label={"Zoom"}
-                    onChange={(v) => setScale(Number(v))}
-                    step={0.05}
-                    value={scale}
-                    min={0.25}
-                    max={4.0}
-                />
-
-                {file && (
-                    <Pagination
-                        value={currentPage}
-                        total={numPages}
-                        siblings={5}
-                        onChange={setCurrentPage}
-                    />
-                )}
-            </Group>
-            {file && (
-                <Text>
-                    Page {currentPage} of {numPages}
-                </Text>
-            )}
-            {file && <Text>Current file: {file.name}</Text>}
-            {/* <Group wrap="nowrap"> */}
-            <div
-                style={{
-                    height: file && !loading ? dimensions.height : undefined,
-                    width: file && !loading ? dimensions.width : undefined,
-                }}
-            >
-                <Document
-                    ref={documentRef}
-                    onClick={onPageClick}
-                    file={file}
-                    options={options}
-                    onLoadSuccess={onDocumentLoad}
-                >
-                    <Page
-                        scale={scale}
-                        key={`page_${currentPage}`}
-                        pageNumber={currentPage}
-                        renderAnnotationLayer={false}
-                        onLoadSuccess={onPageLoad}
-                    />
-                </Document>
-            </div>
+            <Title>PDF Parsing Utility - {VERSION}</Title>
+            <PDFViewer
+                onTextClick={onTextObjectClick}
+                onPageLoad={setCurrentPageTextData}
+            />
             <TemplateContext.Provider
                 value={{
                     activeCell,
                     setActiveCell,
                     templateRow,
                     setTemplateRow,
+                    deleteRow,
+                    copyRow,
+                    pasteRow,
                 }}
             >
                 <ResizableAffix>
@@ -415,6 +340,7 @@ function App() {
                         />
                         {Object.values(OPERATIONS).map((o) => (
                             <Button
+                                key={o.symbol}
                                 onClick={() => appendOperationToCurrentCell(o)}
                                 disabled={!operationsEnabled}
                             >
@@ -441,25 +367,12 @@ function App() {
                             Apply Template
                         </Button>
                         <ExportCSVButton api={gridRef.current?.api} />
-                        <Button
-                            onClick={() => copyRow()}
-                            disabled={!data[selectedRow]}
-                        >
-                            Copy Template
-                        </Button>
-                        <Button
-                            onClick={() => pasteRow()}
-                            disabled={!(data[selectedRow] && !!copiedRow)}
-                        >
-                            Paste Template
-                        </Button>
                         <NumberInput
                             value={
-                                Object.values(data[templateRow] ?? {})[0]?.[0]
-                                    ?.index
+                                getFirstTemplateValue(data[templateRow])?.index
                             }
                             disabled={
-                                Object.values(data[templateRow] ?? {})[0]?.[0]
+                                getFirstTemplateValue(data[templateRow])
                                     ?.index === undefined ||
                                 editingMode === MANUAL_MODE
                             }
@@ -470,16 +383,21 @@ function App() {
                                 adjustRowTemplateIndex(templateRow, e)
                             }
                         />
+                        <Button variant="outline" onClick={resetData} c={"red"}>
+                            Reset Grid Data
+                        </Button>
                     </Group>
-                    <CSVGrid
-                        ref={gridRef}
-                        data={data}
-                        editingMode={editingMode}
-                        setDataValue={editData}
-                        onRowSelected={onRowSelected}
-                        onCellClicked={onCellClicked}
-                        processCellCallback={processCellCallback}
-                    ></CSVGrid>
+                    {loaded && (
+                        <CSVGrid
+                            ref={gridRef}
+                            data={data}
+                            editingMode={editingMode}
+                            setDataValue={editData}
+                            onRowSelected={onRowSelected}
+                            onCellClicked={onCellClicked}
+                            processCellCallback={processCellCallback}
+                        ></CSVGrid>
+                    )}
                 </ResizableAffix>
             </TemplateContext.Provider>
             {/* </Group> */}
