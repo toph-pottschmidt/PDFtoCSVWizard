@@ -174,6 +174,15 @@ export const PDFViewer = ({ onTextClick, onPageLoad: onPageLoadExternal }) => {
                     min={0.25}
                     max={4.0}
                 />
+                <NumberInput
+                    w={100}
+                    label={"Page"}
+                    onChange={setCurrentPage}
+                    step={1}
+                    value={currentPage}
+                    min={1}
+                    max={numPages}
+                />
 
                 {file && (
                     <Pagination
