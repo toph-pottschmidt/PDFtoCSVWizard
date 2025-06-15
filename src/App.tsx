@@ -303,7 +303,10 @@ function App() {
         setActiveCell((old) => ({ ...old, rowIndex: 0 }))
     }, [])
 
-    const resetData = () => setData([{}])
+    const resetData = () => {
+        setData([{}])
+        setDefaultRowValue({})
+    }
 
     return (
         <>

@@ -307,6 +307,7 @@ export const CSVGrid = forwardRef(
                     ref={ref}
                     animateRows={false}
                     onRowSelected={onRowSelected}
+                    suppressScrollOnNewData
                     rowSelection={{ mode: "singleRow" }}
                     defaultColDef={{
                         cellRendererParams: {
