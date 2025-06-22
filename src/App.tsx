@@ -104,7 +104,6 @@ function App() {
         const api: GridApi = gridRef?.current?.api
         const data = readLocalStorageValue({ key: CSV_DATA_STORAGE_KEY })
         if (data) {
-            console.log("setting updated data")
             api?.setGridOption("rowData", data)
         }
         const metadata = readLocalStorageValue({ key: METADATA_STORAGE_KEY })
@@ -207,7 +206,6 @@ function App() {
     const addNewRow = () => {
         const api: GridApi = gridRef?.current?.api
         if (!api) {
-            console.log("addNewRow failed")
             return
         }
         api.applyTransaction({ add: [{ ...defaultRowValue }] })
@@ -219,7 +217,6 @@ function App() {
             return
         }
         const currentCell = api.getRowNode(activeCell.rowIndex.toString())
-        console.log(currentCell)
         const currentCellValue = currentCell?.data[activeCell.colId]
 
         return (
@@ -244,7 +241,6 @@ function App() {
     // and auto-index-offset will fail
     const pasteRow = (row) => {
         const dataToInject = copiedRow
-        console.log(dataToInject)
         if (!dataToInject) {
             return
         }
@@ -289,7 +285,6 @@ function App() {
         const baseIndex = getFirstTemplateValue(currentTemplate)?.index
         // const baseIndex = values[0]?.[0]?.index
         const offset = value - baseIndex
-        console.log(baseIndex, offset)
         const newTemplateValue: Record<string, object> = {}
         for (const [key, value] of Object.entries(currentTemplate)) {
             const newValue = value.map((v) => {
