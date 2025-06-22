@@ -7,8 +7,15 @@ import {
     SegmentedControl,
     NumberInput,
 } from "@mantine/core"
-import { GridApi } from "ag-grid-community"
-import { RefObject, useCallback, useEffect, useRef, useState } from "react"
+import { ColDef, GridApi, IRowNode, RowNode } from "ag-grid-community"
+import {
+    RefObject,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from "react"
 import "@mantine/core/styles.css"
 import "react-pdf/dist/esm/Page/TextLayer.css"
 import {
@@ -30,8 +37,6 @@ import { readLocalStorageValue, useLocalStorage } from "@mantine/hooks"
 import { PDFViewer } from "./PDFViewer"
 
 const VERSION = "0.1.0"
-
-window.r = resolveValuesAndOperations
 
 const CSV_DATA_STORAGE_KEY = "PdfToCsvWizard_WorkingData"
 const METADATA_STORAGE_KEY = "PdfToCsvWizard_Metadata"
@@ -56,7 +61,7 @@ function App() {
     }
 
     const [loaded, setLoaded] = useState<boolean>(false)
-    const [data, setData] = useState<Array<object>>(savedData)
+    const [gridReady, setGridReady] = useState(false)
     const [currentPageTextData, setCurrentPageTextData] = useState([])
 
     const [activeCell, setActiveCell] = useState<ActiveCell>(defaultActiveCell)
@@ -77,16 +82,18 @@ function App() {
     const [selectedRow, setSelectedRow] = useState<number>(-1)
     const [copiedRow, setCopiedRow] = useState<Array<object> | undefined>()
 
-    const currentCellValue = data[activeCell.rowIndex][activeCell.colId] ?? []
     // auto-save
     useEffect(() => {
         const intervalId = setInterval(() => {
             console.log("Starting save")
-            setData((oldData) => {
-                // TOOD
-                setSavedData(oldData)
-                return oldData
-            })
+            const api: GridApi = gridRef?.current?.api
+            if (!api) {
+                return
+            }
+            const allData = []
+            api.forEachNode((rowNode) => allData.push(rowNode.data))
+
+            setSavedData(allData)
             console.log("Finished Saving!")
         }, 30 * 1000)
 
@@ -94,78 +101,69 @@ function App() {
     }, [])
 
     useEffect(() => {
+        const api: GridApi = gridRef?.current?.api
         const data = readLocalStorageValue({ key: CSV_DATA_STORAGE_KEY })
         if (data) {
-            setData(data)
+            console.log("setting updated data")
+            api?.setGridOption("rowData", data)
         }
         const metadata = readLocalStorageValue({ key: METADATA_STORAGE_KEY })
         if (metadata?.defaultRowValue) {
             setDefaultRowValue(metadata.defaultRowValue)
         }
         setLoaded(true)
-    }, [])
+    }, [gridRef, loaded, gridReady])
 
     const editData = ({ rowIndex, colId, newValue }) => {
         const api: GridApi = gridRef?.current?.api
         if (!api) {
             return
         }
-
-        // TODO: is this pure? idk.
         if (updateAll) {
-            // set each data row value by column id to the new value
             setDefaultRowValue((old) => {
                 const newDefault = { ...old, [colId]: newValue }
                 setMetadataValue("defaultRowValue", newDefault)
                 return newDefault
             })
-            setData((oldData) =>
-                oldData.map((d) => {
-                    d[colId] = newValue
-                    return d
-                })
-            )
-            return
+            api.forEachNode((rowNode) => rowNode.setDataValue(colId, newValue))
+        } else {
+            const row = api.getRowNode(rowIndex)
+            row!.setDataValue(colId, newValue)
         }
-        setData((oldData) => {
-            const oldValue = oldData[rowIndex]
-            const newData = [...oldData]
-            newData.splice(rowIndex, 1, { ...oldValue, [colId]: newValue })
-            return newData
-        })
     }
 
     const appendOperationToCurrentCell = (newValue: Operation) => {
+        const api: GridApi = gridRef?.current?.api
+        if (!api) {
+            return
+        }
+        const currentCellValue = api.getRowNode(activeCell.rowIndex.toString())
+            ?.data[activeCell.colId]
         if (!currentCellValue) {
             return
         }
+
         const finalNewValue = [...currentCellValue, { symbol: newValue.symbol }]
-        setData((oldData) => {
-            const newData = [...oldData]
-            const oldRow = oldData[activeCell.rowIndex]
-            const newRow = {
-                ...oldRow,
-                [activeCell.colId]: finalNewValue,
-            }
-            newData.splice(activeCell.rowIndex, 1, newRow)
-            return newData
-        })
+        editData({ ...activeCell, newValue: finalNewValue })
     }
 
-    const processCellCallback = ({ value, ...rest }) => {
-        console.log(value, rest)
+    const processCellCallback = useCallback(({ value }) => {
         if (typeof value === "string") {
             return value
         }
 
         return resolveValuesAndOperations(value).join(" ")
-    }
+    }, [])
 
     const onTextObjectClick = async (wordObj) => {
         const api: GridApi = gridRef?.current?.api
         if (!api || !wordObj) {
             return
         }
+        const currentCellValue =
+            api.getRowNode(activeCell.rowIndex.toString())?.data[
+                activeCell.colId
+            ] ?? []
 
         const newValue = [...currentCellValue, wordObj]
 
@@ -173,10 +171,15 @@ function App() {
     }
 
     const applyTemplateToRowIndex = (rowIndex) => {
-        // selectedTemplate
-        // { key: obj }
+        const api: GridApi = gridRef?.current?.api
+        if (!api) {
+            return
+        }
+        const template = api.getRowNode(templateRow.toString())?.data
+        const data = []
+        api.forEachNode((rowNode) => data.push(rowNode.data))
         const result = generateDataFromTemplate({
-            template: data[templateRow],
+            template,
             templateRowIndex: templateRow,
             rowIndex,
             data,
@@ -189,24 +192,52 @@ function App() {
 
         const { data: newData, offsetUsed } = result
         setTemplateOffset(offsetUsed)
-        setData(newData)
+        // TODO: don't return the entire data set again?
+        const rowNode: IRowNode | undefined = api.getRowNode(rowIndex)
+        if (rowNode) {
+            rowNode.setData(newData[rowIndex])
+        } else {
+            api.applyTransactionAsync({ add: [newData[rowIndex]] })
+        }
     }
 
     const applyTemplateToActiveRow = () =>
         applyTemplateToRowIndex(activeCell.rowIndex)
 
-    const addNewRow = () => setData((old) => [...old, defaultRowValue])
+    const addNewRow = () => {
+        const api: GridApi = gridRef?.current?.api
+        if (!api) {
+            console.log("addNewRow failed")
+            return
+        }
+        api.applyTransaction({ add: [{ ...defaultRowValue }] })
+    }
 
-    const operationsEnabled =
-        currentCellValue.length &&
-        !isOperation(currentCellValue[currentCellValue.length - 1])
+    const operationsEnabled = useMemo(() => {
+        const api: GridApi = gridRef?.current?.api
+        if (!api) {
+            return
+        }
+        const currentCell = api.getRowNode(activeCell.rowIndex.toString())
+        console.log(currentCell)
+        const currentCellValue = currentCell?.data[activeCell.colId]
+
+        return (
+            currentCellValue?.length &&
+            !isOperation(currentCellValue[currentCellValue.length - 1])
+        )
+    }, [activeCell])
 
     const clearCellData = () => {
         editData({ ...activeCell, newValue: [] })
     }
 
     const copyRow = (row) => {
-        setCopiedRow(data[row])
+        const api: GridApi = gridRef?.current?.api
+        if (!api) {
+            return
+        }
+        setCopiedRow(api.getRowNode(row)?.data)
     }
 
     // to be used for "pasting" a template to a new row in cases like new pdf page
@@ -232,16 +263,16 @@ function App() {
                 }
             })
         })
-        setData((old) => {
-            const newData = [...old]
-            newData.splice(row, 1, newRow)
-            return newData
-        })
+        const api: GridApi = gridRef?.current?.api
+        if (!api) {
+            return
+        }
+        api.getRowNode(row)?.setData(newRow)
         setTemplateRow(row)
     }
 
     const addNewTemplatedRow = () => {
-        addNewRow()
+        // addNewRow()
         setActiveCell((old) => ({
             ...old,
             rowIndex: old.rowIndex + 1,
@@ -250,7 +281,11 @@ function App() {
     }
 
     const adjustRowTemplateIndex = (rowIndex, value) => {
-        const currentTemplate = data[rowIndex]
+        const api: GridApi = gridRef?.current?.api
+        if (!api) {
+            return
+        }
+        const currentTemplate = api.getRowNode(rowIndex)?.data
         const baseIndex = getFirstTemplateValue(currentTemplate)?.index
         // const baseIndex = values[0]?.[0]?.index
         const offset = value - baseIndex
@@ -269,43 +304,49 @@ function App() {
             })
             newTemplateValue[key] = newValue
         }
-
-        setData((old) => {
-            const newData = [...old]
-            newData.splice(templateRow, 1, newTemplateValue)
-            return newData
-        })
+        api.getRowNode(rowIndex)?.setData(newTemplateValue)
     }
 
-    const onRowSelected = (e) => {
-        if (!e.event?.target) {
-            return
-        }
-        if (e.rowIndex === selectedRow && !e.event.target.checked) {
-            setSelectedRow(-1)
-        } else if (e.event.target.checked) {
-            setSelectedRow(e.rowIndex)
-        }
-    }
+    const onRowSelected = useCallback(
+        (e) => {
+            if (!e.event?.target) {
+                return
+            }
+            if (e.rowIndex === selectedRow && !e.event.target.checked) {
+                setSelectedRow(-1)
+            } else if (e.event.target.checked) {
+                setSelectedRow(e.rowIndex)
+            }
+        },
+        [selectedRow]
+    )
 
-    const onCellClicked = ({ node, colDef }) =>
-        setActiveCell({
-            colId: colDef.colId!,
-            rowIndex: node.rowIndex!,
-        })
+    const onCellClicked = useCallback(
+        ({ node, colDef }: { node: RowNode; colDef: ColDef }) =>
+            setActiveCell({
+                colId: colDef.colId!,
+                rowIndex: node.rowIndex!,
+            }),
+        []
+    )
 
     const deleteRow = useCallback((row: number) => {
-        setData((oldData) => {
-            const newData = [...oldData]
-            newData.splice(row, 1)
-            return newData
-        })
+        const api: GridApi = gridRef?.current?.api
+        if (!api) {
+            return
+        }
+        api.applyTransaction({ remove: [api.getRowNode(row)?.id] })
         setActiveCell((old) => ({ ...old, rowIndex: 0 }))
     }, [])
 
     const resetData = () => {
-        setData([{}])
+        const api: GridApi = gridRef?.current?.api
+        if (!api) {
+            return
+        }
+        api.setGridOption("rowData", [])
         setDefaultRowValue({})
+        setMetadataValue("defaultRowValue", {})
     }
 
     return (
@@ -372,11 +413,16 @@ function App() {
                         <ExportCSVButton api={gridRef.current?.api} />
                         <NumberInput
                             value={
-                                getFirstTemplateValue(data[templateRow])?.index
+                                getFirstTemplateValue(
+                                    gridRef.current?.api?.getRowNode(
+                                        templateRow
+                                    )
+                                )?.index
                             }
                             disabled={
-                                getFirstTemplateValue(data[templateRow])
-                                    ?.index === undefined ||
+                                getFirstTemplateValue(
+                                    gridRef.current?.ap?.getRowNode(templateRow)
+                                )?.index === undefined ||
                                 editingMode === MANUAL_MODE
                             }
                             description={"Template offset control"}
@@ -390,17 +436,15 @@ function App() {
                             Reset Grid Data
                         </Button>
                     </Group>
-                    {loaded && (
-                        <CSVGrid
-                            ref={gridRef}
-                            data={data}
-                            editingMode={editingMode}
-                            setDataValue={editData}
-                            onRowSelected={onRowSelected}
-                            onCellClicked={onCellClicked}
-                            processCellCallback={processCellCallback}
-                        ></CSVGrid>
-                    )}
+                    <CSVGrid
+                        ref={gridRef}
+                        editingMode={editingMode}
+                        setDataValue={editData}
+                        onRowSelected={onRowSelected}
+                        onCellClicked={onCellClicked}
+                        processCellCallback={processCellCallback}
+                        onGridReady={() => setGridReady(true)}
+                    ></CSVGrid>
                 </ResizableAffix>
             </TemplateContext.Provider>
             {/* </Group> */}

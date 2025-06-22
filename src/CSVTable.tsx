@@ -1,6 +1,6 @@
 import { AgGridReact } from "ag-grid-react"
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community"
-import { forwardRef, useContext, useEffect, useMemo } from "react"
+import { AllCommunityModule, GridApi, ModuleRegistry } from "ag-grid-community"
+import { forwardRef, useContext, useEffect, useMemo, useState } from "react"
 import "@mantine/core/styles.css"
 import "react-pdf/dist/esm/Page/TextLayer.css"
 import {
@@ -193,18 +193,16 @@ function PDFObjectCellEditor({ value, onValueChange }) {
 
     return <TextInput onChange={onChange2} />
 }
-
 // Component meant to house settings and
 export const CSVGrid = forwardRef(
     (
         {
-            data,
             editingMode,
             processCellCallback,
-            children,
             setDataValue,
             onRowSelected,
             onCellClicked,
+            onGridReady,
         },
         ref
     ) => {
@@ -217,13 +215,20 @@ export const CSVGrid = forwardRef(
             pasteRow,
         } = useContext(TemplateContext)
 
+        const [gridLoaded, setGridLoaded] = useState(false)
+
         // TODO: too verbose event handler, would love to refactor and prevent bugs with this
 
         useEffect(() => {
+            const api: GridApi = ref?.current?.api
+            if (!api || !gridLoaded) {
+                return
+            }
             const onKeyDown = (e: Event) => {
                 if (editingMode === MANUAL_MODE) {
                     return
                 }
+                const dataLength = api.getDisplayedRowCount()
                 switch (e.key) {
                     case "a":
                     case "ArrowLeft":
@@ -277,7 +282,7 @@ export const CSVGrid = forwardRef(
                     case "s":
                     case "ArrowDown":
                         setActiveCell((oldCell) => {
-                            if (oldCell.rowIndex === data.length - 1) {
+                            if (oldCell.rowIndex === dataLength - 1) {
                                 return oldCell
                             }
                             return {
@@ -292,7 +297,7 @@ export const CSVGrid = forwardRef(
             document.addEventListener("keydown", onKeyDown)
 
             return () => document.removeEventListener("keydown", onKeyDown)
-        }, [setActiveCell, data, editingMode])
+        }, [setActiveCell, ref, editingMode, gridLoaded])
 
         useEffect(() => {
             ref?.current?.api?.setFocusedCell(
@@ -341,9 +346,10 @@ export const CSVGrid = forwardRef(
                     }}
                     onCellClicked={onCellClicked}
                     onRowDataUpdated={(e) => console.log(e)}
-                    rowData={data}
                     columnDefs={columns}
                     onGridReady={() => {
+                        onGridReady()
+                        setGridLoaded(true)
                         setActiveCell({
                             rowIndex: 0,
                             colId: columns[numActionColumns].colId,
