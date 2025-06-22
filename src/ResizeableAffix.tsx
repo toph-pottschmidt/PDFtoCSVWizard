@@ -77,7 +77,7 @@ export const ResizableAffix = ({ children }) => {
                     ref={resizeRef}
                     style={{
                         width: dimensionProps.width - 10,
-                        height: dimensionProps.height - 10 - 220,
+                        height: dimensionProps.height - 10 - 250,
                     }}
                 >
                     {children}
