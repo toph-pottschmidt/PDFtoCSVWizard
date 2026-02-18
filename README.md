@@ -1,6 +1,6 @@
 # Introduction
 
-PDFtoCSVWizard is a tool designed for overhauling data-entry from PDFs to CSVs by simply clicking on texts, and working upward to powerful abstractions like templating rows and (coming soon) pages.
+PDFtoCSVWizard is a tool designed for overhauling data-entry from PDFs to CSVs by simply clicking on texts, and working upward to powerful abstractions like templating rows and (coming soon) pages. NOTE: after a lot of time off this project it has suffered from mental model decay. Project is in a broken state and isn't planned to be maintained in the upcoming year.
 
 # Use
 
